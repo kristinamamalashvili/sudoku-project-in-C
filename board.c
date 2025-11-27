@@ -1,3 +1,2 @@
 #include "board.h"
-
-fgfhgfhf
+im gonna start working now
