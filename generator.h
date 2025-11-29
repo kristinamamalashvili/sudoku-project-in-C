@@ -1,4 +1,8 @@
-#ifndef UNTITLED_GENERATOR_H
-#define UNTITLED_GENERATOR_H
+#ifndef GENERATOR_H
+#define GENERATOR_H
 
-#endif //UNTITLED_GENERATOR_H
+#include "board.h"
+
+void generate_puzzle(Board *puzzle, Board *solution);
+
+#endif GENERATOR_H
