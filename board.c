@@ -1,5 +1,5 @@
-#include "board.h"
-#include <stdlib.h>
+#include "../include/board.h" // Assumes board.c is in 'src' and board.h is in 'include'
+#include <stdlib.h> // Good practice for general C
 
 // Initializes board to all zeros
 void board_init(Board b) {
@@ -12,6 +12,7 @@ void board_init(Board b) {
 
 // Prints the board nicely to the specified stream
 void board_print(const Board b, FILE *stream) {
+    //
     fprintf(stream, "\n+-------+-------+-------+\n");
     for (int i = 0; i < SIZE; i++) {
         fprintf(stream, "| ");

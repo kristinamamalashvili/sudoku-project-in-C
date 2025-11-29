@@ -13,5 +13,4 @@ void board_print(const Board b, FILE *stream);
 bool board_is_move_valid(const Board b, int r, int c, int v);
 bool board_is_full(const Board b);
 
-
-// #endif BOARD_H
+#endif // BOARD_H
