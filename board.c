@@ -1,4 +1,4 @@
-#include "../include/board.h" // Assumes board.c is in 'src' and board.h is in 'include'
+#include "board.h" // Assumes board.c is in 'src' and board.h is in 'include'
 #include <stdlib.h> // Good practice for general C
 
 // Initializes board to all zeros
