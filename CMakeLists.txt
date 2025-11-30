@@ -7,6 +7,7 @@ add_executable(sudoku
         sudoku.c #this contains main()
         board.c
         solver.c
-        generator.c)
+        generator.c
+)
 
 target_include_directories(sudoku PRIVATE   ${CMAKE_CURRENT_SOURCE_DIR} )

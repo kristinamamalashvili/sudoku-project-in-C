@@ -8,6 +8,7 @@
 #include <string.h>
 #include <stdbool.h>
 #include <time.h>
+#include <ctype.h>   // for toupper
 
 
 static void copy_board(Board dst, const Board src)
@@ -78,9 +79,6 @@ static bool parse_A7_move(const char *line, int *row, int *col, int *value)
     return true;
 }
 
-// Read a move with a soft time limit:
-//   - We measure how long the user *takes* to type and press Enter,
-//     but we don't actually stop them mid-typing.
 // Returns:
 //   1  = got a valid move in time (row/col/value set)
 //   0  = input took too long (time up)
@@ -149,34 +147,8 @@ ProgramMode parse_mode(int argc, char *argv[], int *out_player_id)
     exit(EXIT_FAILURE);
 }
 
-// ----------------- Server: actual game -----------------
-
 int run_server(void)
 {
-    Board puzzle;
-    Board solution;
-    Board current;
-
-    generate_puzzle(puzzle, solution);
-    copy_board(current, puzzle);
-
-    // Optional: check solver works
-    Board check;
-    copy_board(check, puzzle);
-    if (!solve(check)) {
-        fprintf(stderr, "Internal error: solver could not solve puzzle.\n");
-        return 1;
-    }
-
-    struct {
-        const char *name;
-        int score;
-    } players[2] = {
-        { "Player 1", 0 },
-        { "Player 2", 0 }
-    };
-
-    int turn = 0;              // 0 = P1, 1 = P2
     int seconds_per_turn = 20;
 
     printf("Two-player Sudoku.\n");
@@ -185,78 +157,156 @@ int run_server(void)
     printf("Correct number = +1 point. Wrong number = no change, turn passes.\n");
     printf("No input / too slow = turn lost.\n");
 
-    while (!board_is_full(current)) {
-        printf("\n==== %s's TURN ====\n", players[turn].name);
-        board_print(current, stdout);
+    // Outer loop: each iteration is a NEW puzzle ("next exercise")
+    while (1) {
+        Board puzzle;
+        Board solution;
+        Board current;
 
-        int r, c, v;
-        int res = read_move_A7_with_timer(&r, &c, &v, seconds_per_turn);
+        generate_puzzle(puzzle, solution);
+        copy_board(current, puzzle);
 
-        if (res == 0) {
-            printf("Time up! No move registered. Turn lost.\n");
-            turn = 1 - turn;
-            continue;
-        }
-        if (res == -1) {
-            printf("Input error. Ending game.\n");
-            break;
-        }
-        if (res == -2) {
-            printf("Invalid input. Use format like A7 4.\n");
-            turn = 1 - turn;
-            continue;
+        // Optional: check solver works
+        Board check;
+        copy_board(check, puzzle);
+        if (!solve(check)) {
+            fprintf(stderr, "Internal error: solver could not solve puzzle.\n");
+            return 1;
         }
 
-        MoveStatus status = validate_move(puzzle, current, r, c, v);
+        bool next_puzzle = false;  // control flag for inner loop
 
-        if (status != MOVE_OK) {
-            switch (status) {
-                case MOVE_OUT_OF_RANGE:
-                    printf("Move out of range.\n");
-                    break;
-                case MOVE_FIXED_CELL:
-                    printf("Cannot change an original puzzle clue.\n");
-                    break;
-                case MOVE_ALREADY_FILLED:
-                    printf("That cell is already filled.\n");
-                    break;
-                case MOVE_BREAKS_RULES:
-                    printf("That move breaks Sudoku rules.\n");
-                    break;
-                default:
-                    printf("Unknown move error.\n");
-                    break;
+        // Inner loop: allows replaying the SAME puzzle
+        while (!next_puzzle) {
+            struct {
+                const char *name;
+                int score;
+            } players[2] = {
+                { "Player 1", 0 },
+                { "Player 2", 0 }
+            };
+
+            int turn = 0;  // 0 = P1, 1 = P2
+
+            // reset board (same exercise) each time we replay
+            copy_board(current, puzzle);
+
+            // ---- play this puzzle once ----
+            while (!board_is_full(current)) {
+                printf("\n==== %s's TURN ====\n", players[turn].name);
+                board_print(current, stdout);
+
+                int r, c, v;
+                int res = read_move_A7_with_timer(&r, &c, &v, seconds_per_turn);
+
+                if (res == 0) {
+                    printf("Time up! No move registered. Turn lost.\n");
+                    turn = 1 - turn;
+                    continue;
+                }
+                if (res == -1) {
+                    printf("Input error. Ending game.\n");
+                    return 0;
+                }
+                if (res == -2) {
+                    printf("Invalid input. Use format like A7 4.\n");
+                    turn = 1 - turn;
+                    continue;
+                }
+
+                MoveStatus status = validate_move(puzzle, current, r, c, v);
+
+                if (status != MOVE_OK) {
+                    switch (status) {
+                        case MOVE_OUT_OF_RANGE:
+                            printf("Move out of range.\n");
+                            break;
+                        case MOVE_FIXED_CELL:
+                            printf("Cannot change an original puzzle clue.\n");
+                            break;
+                        case MOVE_ALREADY_FILLED:
+                            printf("That cell is already filled.\n");
+                            break;
+                        case MOVE_BREAKS_RULES:
+                            printf("That move breaks Sudoku rules.\n");
+                            break;
+                        default:
+                            printf("Unknown move error.\n");
+                            break;
+                    }
+                    turn = 1 - turn;
+                    continue;
+                }
+
+                // Check against solution
+                if (solution[r][c] == v) {
+                    current[r][c] = v;
+                    players[turn].score++;
+                    printf("Correct! %s gains a point.\n", players[turn].name);
+                } else {
+                    printf("Wrong number. Board stays the same.\n");
+                }
+
+                turn = 1 - turn;
             }
-            turn = 1 - turn;
-            continue;
-        }
 
-        // Check against solution
-        if (solution[r][c] == v) {
-            current[r][c] = v;
-            players[turn].score++;
-            printf("Correct! %s gains a point.\n", players[turn].name);
-        } else {
-            printf("Wrong number. Board stays the same.\n");
-        }
+            // ---- puzzle finished once ----
+            printf("\n=== EXERCISE COMPLETE ===\n");
+            board_print(current, stdout);
+            printf("Scores for this exercise:\n");
+            printf("Player 1: %d\n", players[0].score);
+            printf("Player 2: %d\n", players[1].score);
 
-        turn = 1 - turn;
+            if (players[0].score > players[1].score)
+                printf("Winner: Player 1!\n");
+            else if (players[1].score > players[0].score)
+                printf("Winner: Player 2!\n");
+            else
+                printf("It's a tie!\n");
+
+            // ---- ask what to do next for this exercise ----
+            char buf[32];
+            char choice;
+
+            while (1) {
+                printf("\nWhat do you want to do now?\n");
+                printf("  R - Replay the SAME exercise\n");
+                printf("  N - Next exercise (new puzzle)\n");
+                printf("  Q - Quit\n");
+                printf("Choice: ");
+                fflush(stdout);
+
+                if (!fgets(buf, sizeof(buf), stdin)) {
+                    // EOF or input error -> just quit
+                    return 0;
+                }
+
+                if (sscanf(buf, " %c", &choice) != 1) {
+                    printf("Invalid input.\n");
+                    continue;
+                }
+
+                choice = (char)toupper((unsigned char)choice);
+
+                if (choice == 'R') {
+                    printf("\nReplaying the same exercise...\n");
+                    // break only the choice loop, replay same puzzle
+                    break;
+                } else if (choice == 'N') {
+                    printf("\nLoading next exercise...\n");
+                    next_puzzle = true;
+                    break;
+                } else if (choice == 'Q') {
+                    printf("\nQuitting the game. Bye!\n");
+                    return 0;
+                } else {
+                    printf("Please enter R, N, or Q.\n");
+                }
+            }
+            // if choice == 'R', inner while(!next_puzzle) repeats with same puzzle
+        }
+        // if next_puzzle == true, outer while(1) continues and generates new puzzle
     }
-
-    printf("\n=== GAME OVER ===\n");
-    board_print(current, stdout);
-    printf("Final Scores:\n");
-    printf("Player 1: %d\n", players[0].score);
-    printf("Player 2: %d\n", players[1].score);
-
-    if (players[0].score > players[1].score)
-        printf("Winner: Player 1!\n");
-    else if (players[1].score > players[0].score)
-        printf("Winner: Player 2!\n");
-    else
-        printf("It's a tie!\n");
-
-    return 0;
 }
 
 
