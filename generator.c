@@ -1,9 +1,10 @@
 #include "generator.h"
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 #include "board.h"
 
-void generate_puzzle(Board *puzzle, Board *solution) {
+void generate_puzzle(Board puzzle, Board solution) {
     FILE *f = fopen("sudoku.csv", "r");
     if (!f) {
         fprintf(stderr, "Could not open sudoku.csv\n");
@@ -36,8 +37,8 @@ void generate_puzzle(Board *puzzle, Board *solution) {
     for (int i = 0; i < 81; ++i) {
         int r = i / 9;
         int c = i % 9;
-        puzzle->cells[r][c]   = quiz[i] - '0';
-        solution->cells[r][c] = sol[i] - '0';
+        puzzle[r][c] = quiz[i] - '0';
+        solution[r][c] = sol[i] - '0';
     }
 
     fclose(f);

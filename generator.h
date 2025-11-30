@@ -3,6 +3,6 @@
 
 #include "board.h"
 
-void generate_puzzle(Board *puzzle, Board *solution);
+void generate_puzzle(Board puzzle, Board solution);
 
-#endif GENERATOR_H
+#endif //GENERATOR_H

@@ -3,11 +3,10 @@ project(sudoku_project_in_C C)
 
 set(CMAKE_C_STANDARD 11)
 
-add_executable(
-        src/sudoku.c #this contains main()
-        src/board.c
-        src/solver .c
-        src/generator.c
-        solver.h)
+add_executable(sudoku
+        sudoku.c #this contains main()
+        board.c
+        solver.c
+        generator.c)
 
-target_include_directories(sudoku PRIVATE src)
+target_include_directories(sudoku PRIVATE   ${CMAKE_CURRENT_SOURCE_DIR} )

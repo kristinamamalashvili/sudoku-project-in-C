@@ -1,7 +1,6 @@
 #include "board.h" // Assumes board.c is in 'src' and board.h is in 'include'
 #include <stdlib.h> // Good practice for general C
 
-// Initializes board to all zeros
 void board_init(Board b) {
     for (int i = 0; i < SIZE; i++) {
         for (int j = 0; j < SIZE; j++) {
@@ -12,10 +11,17 @@ void board_init(Board b) {
 
 // Prints the board nicely to the specified stream
 void board_print(const Board b, FILE *stream) {
-    //
+
+    fprintf(stream, "\n    ");
+    for (int col = 0; col < SIZE; col++) {
+        fprintf(stream, "%d ", col + 1);
+        if ((col + 1) % 3 == 0)
+            fprintf(stream, "  ");
+    }
+
     fprintf(stream, "\n+-------+-------+-------+\n");
     for (int i = 0; i < SIZE; i++) {
-        fprintf(stream, "| ");
+        fprintf(stream, "%c | ", 'A' + i);
         for (int j = 0; j < SIZE; j++) {
             if (b[i][j] == 0) {
                 fprintf(stream, "  ");
