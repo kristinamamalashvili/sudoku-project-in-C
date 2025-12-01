@@ -204,9 +204,8 @@ ProgramMode parse_mode(int argc, char *argv[], int *out_player_id)
         fprintf(stderr,
                 "Usage:\n"
                 "  %s server\n"
-                "  %s client 1\n"
-                "  %s client 2\n",
-                argv[0], argv[0], argv[0]);
+                "  %s client [ID] [ADDRESS] [PORT]\n", // <-- UPDATED USAGE
+                argv[0], argv[0]);
         exit(EXIT_FAILURE);
     }
 
@@ -216,14 +215,24 @@ ProgramMode parse_mode(int argc, char *argv[], int *out_player_id)
     }
 
     if (strcmp(argv[1], "client") == 0) {
-        if (argc < 3) {
-            fprintf(stderr, "Error: client mode requires player number (1 or 2).\n");
+        // Must have ID, ADDRESS, and PORT (4 arguments total: 0, 1, 2, 3, 4)
+        if (argc < 5) { // <-- CHECK FOR 5 ARGS
+            fprintf(stderr, "Error: client mode requires player number (1 or 2), server address, and port.\n");
             exit(EXIT_FAILURE);
         }
 
         int id = atoi(argv[2]);
         if (id != 1 && id != 2) {
             fprintf(stderr, "Error: invalid player id %d (must be 1 or 2).\n", id);
+            exit(EXIT_FAILURE);
+        }
+
+        // CAPTURE ARGUMENTS
+        g_server_addr = argv[3]; // <-- Store Address
+        g_server_port = atoi(argv[4]); // <-- Store Port
+
+        if (g_server_port <= 0) {
+            fprintf(stderr, "Error: invalid port number '%s'.\n", argv[4]);
             exit(EXIT_FAILURE);
         }
 
@@ -235,7 +244,6 @@ ProgramMode parse_mode(int argc, char *argv[], int *out_player_id)
             argv[1]);
     exit(EXIT_FAILURE);
 }
-
 int run_server(void)
 {
     int seconds_per_turn = 20;
@@ -309,7 +317,7 @@ int run_server(void)
                 board_print(current, stdout);
 
                 int r, c, v;
-                int res = read_move_A7_with_timer(&r, &c, &v, seconds_per_turn);
+                int res = read_move_from_client(turn_sock, &r, &c, &v, seconds_per_turn);
 
                 if (res == 0) {
                     printf("Time up! No move registered. Turn lost.\n");
@@ -430,7 +438,7 @@ int run_client(int player_id, const char *server_addr, int port)
 
     struct sockaddr_in addr = {0};
     addr.sin_family = AF_INET;
-    addr.sin_port   = htons(5555);
+    addr.sin_port   = htons(port);
 
     if (inet_pton(AF_INET, server_addr, &addr.sin_addr) <= 0) {
         perror("Invalid address/Address not supported");
@@ -473,11 +481,12 @@ int run_client(int player_id, const char *server_addr, int port)
 
 int main(int argc, char *argv[])
 {
-    int player_id = 0;
-    ProgramMode mode = parse_mode(argc, argv, &player_id);
+        int player_id = 0;
+        ProgramMode mode = parse_mode(argc, argv, &player_id);
 
-    if (mode == MODE_SERVER)
-        return run_server();
-    else
-        return run_client(player_id);
+        if (mode == MODE_SERVER)
+            return run_server();
+        else
+            // PASS THE CAPTURED ARGUMENTS to run_client
+                return run_client(player_id, g_server_addr, g_server_port);
 }
