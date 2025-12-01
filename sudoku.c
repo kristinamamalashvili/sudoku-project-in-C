@@ -13,6 +13,7 @@
 #include <unistd.h>
 #include <arpa/inet.h>
 #include <sys/socket.h>
+#include <stdarg.h>
 
 static int client_socks[3] = {0,0,0};   // 1 = P1, 2 = P2
 
@@ -57,6 +58,47 @@ static int recv_line(int sock, char *buf, int max) {
     return 1;
 }
 
+// New Function: Waits for input from a specific client socket
+static int read_move_from_client(int client_sock, int *row, int *col, int *value, int seconds)
+{
+    // The server needs to send the prompt to the client FIRST
+    // The client is designed to wait for "YOUR_MOVE"
+    send(client_sock, "YOUR_MOVE", strlen("YOUR_MOVE"), 0);
+
+    // Now use select() to wait on the socket with a timeout
+    fd_set read_fds;
+    struct timeval tv;
+
+    FD_ZERO(&read_fds);
+    FD_SET(client_sock, &read_fds);
+
+    tv.tv_sec = seconds;
+    tv.tv_usec = 0;
+
+    int ready = select(client_sock + 1, &read_fds, NULL, NULL, &tv);
+
+    if (ready == 0) {
+        return 0; // Timeout
+    }
+    if (ready < 0) {
+        return -1; // Error
+    }
+
+    // Check if the socket is ready to be read
+    if (FD_ISSET(client_sock, &read_fds)) {
+        char line[128];
+        if (!recv_line(client_sock, line, sizeof(line))) {
+            return -1; // Connection closed/error
+        }
+
+        // Use your existing parsing function
+        if (!parse_A7_move(line, row, col, value)) {
+            return -2; // Bad format
+        }
+        return 1; // Success
+    }
+    return -1; // Should not happen
+}
 
 static void copy_board(Board dst, const Board src)
 {
@@ -261,6 +303,8 @@ int run_server(void)
 
             // ---- play this puzzle once ----
             while (!board_is_full(current)) {
+                int player_index = turn + 1;
+                int turn_sock = client_socks[player_index];
                 printf("\n==== %s's TURN ====\n", players[turn].name);
                 board_print(current, stdout);
 
@@ -378,7 +422,7 @@ int run_server(void)
 }
 
 
-int run_client(int player_id)
+int run_client(int player_id, const char *server_addr, int port)
 {
     printf("CLIENT %d connecting...\n", player_id);
 
@@ -387,7 +431,11 @@ int run_client(int player_id)
     struct sockaddr_in addr = {0};
     addr.sin_family = AF_INET;
     addr.sin_port   = htons(5555);
-    inet_pton(AF_INET, "127.0.0.1", &addr.sin_addr);
+
+    if (inet_pton(AF_INET, server_addr, &addr.sin_addr) <= 0) {
+        perror("Invalid address/Address not supported");
+        return 1;
+    }
 
     if (connect(s, (struct sockaddr*)&addr, sizeof(addr)) < 0) {
         perror("connect");
