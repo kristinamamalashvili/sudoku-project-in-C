@@ -15,6 +15,10 @@
 #include <sys/socket.h>
 #include <stdarg.h>
 
+// NEW GLOBAL VARIABLES for client mode configuration
+static char *g_server_addr = NULL;
+static int g_server_port = 0;
+
 static int client_socks[3] = {0,0,0};   // 1 = P1, 2 = P2
 
 // server-side broadcast
