@@ -8,7 +8,54 @@
 #include <string.h>
 #include <stdbool.h>
 #include <time.h>
-#include <ctype.h>   // for toupper
+#include <ctype.h>
+
+#include <unistd.h>
+#include <arpa/inet.h>
+#include <sys/socket.h>
+
+static int client_socks[3] = {0,0,0};   // 1 = P1, 2 = P2
+
+// server-side broadcast
+static void broadcast(const char *text) {
+    for (int i = 1; i <= 2; i++) {
+        if (client_socks[i] > 0)
+            send(client_socks[i], text, strlen(text), 0);
+    }
+}
+
+static void broadcastf(const char *fmt, ...) {
+    char buf[2048];
+    va_list ap;
+    va_start(ap, fmt);
+    vsnprintf(buf, sizeof(buf), fmt, ap);
+    va_end(ap);
+
+    broadcast(buf);
+}
+
+#define PRINTF(...) do {                     \
+char __buf[2048];                        \
+int __n = sprintf(__buf, __VA_ARGS__);   \
+write(1, __buf, __n);                    \
+broadcast(__buf);                        \
+} while(0)
+
+// Read one line (client)
+static int recv_line(int sock, char *buf, int max) {
+    int i = 0;
+    while (i < max - 1) {
+        char c;
+        int n = recv(sock, &c, 1, 0);
+        if (n <= 0)
+            return 0;
+        if (c == '\n')
+            break;
+        buf[i++] = c;
+    }
+    buf[i] = 0;
+    return 1;
+}
 
 
 static void copy_board(Board dst, const Board src)
@@ -150,6 +197,27 @@ ProgramMode parse_mode(int argc, char *argv[], int *out_player_id)
 int run_server(void)
 {
     int seconds_per_turn = 20;
+    int port = 5555;
+
+    PRINTF("SERVER: Waiting for two clients on port %d...\n", port);
+
+    int s = socket(AF_INET, SOCK_STREAM, 0);
+    int yes = 1;
+    setsockopt(s, SOL_SOCKET, SO_REUSEADDR, &yes, sizeof(yes));
+
+    struct sockaddr_in addr = {0};
+    addr.sin_family = AF_INET;
+    addr.sin_port   = htons(port);
+    addr.sin_addr.s_addr = INADDR_ANY;
+
+    bind(s, (struct sockaddr*)&addr, sizeof(addr));
+    listen(s, 2);
+
+    client_socks[1] = accept(s, NULL, NULL);
+    PRINTF("PLAYER 1 connected.\n");
+
+    client_socks[2] = accept(s, NULL, NULL);
+    PRINTF("PLAYER 2 connected.\n");
 
     printf("Two-player Sudoku.\n");
     printf("Input format: A7 4  (row A–I, column 1–9, value 1–9)\n");
@@ -312,9 +380,46 @@ int run_server(void)
 
 int run_client(int player_id)
 {
-    printf("CLIENT MODE: Player %d\n", player_id);
-    printf("(Client functionality not implemented — placeholder.)\n");
+    printf("CLIENT %d connecting...\n", player_id);
+
+    int s = socket(AF_INET, SOCK_STREAM, 0);
+
+    struct sockaddr_in addr = {0};
+    addr.sin_family = AF_INET;
+    addr.sin_port   = htons(5555);
+    inet_pton(AF_INET, "127.0.0.1", &addr.sin_addr);
+
+    if (connect(s, (struct sockaddr*)&addr, sizeof(addr)) < 0) {
+        perror("connect");
+        return 1;
+    }
+
+    printf("Connected to server.\n");
+
+    char buf[512];
+
+    while (1) {
+        if (!recv_line(s, buf, sizeof(buf)))
+            break;
+
+        if (strcmp(buf, "YOUR_MOVE") == 0) {
+            printf("Enter move (A7 4): ");
+            fflush(stdout);
+
+            char input[128];
+            fgets(input, sizeof(input), stdin);
+            input[strcspn(input, "\n")] = 0;
+
+            send(s, input, strlen(input), 0);
+            send(s, "\n", 1, 0);
+        } else {
+            printf("%s\n", buf);
+        }
+    }
+
+    close(s);
     return 0;
+
 }
 
 
