@@ -62,6 +62,29 @@ static int recv_line(int sock, char *buf, int max) {
     return 1;
 }
 
+static bool parse_A7_move(const char *line, int *row, int *col, int *value)
+{
+    char rowChar;
+    int c, v;
+
+    if (sscanf(line, " %c%d %d", &rowChar, &c, &v) != 3) {
+        return false;
+    }
+
+    if (rowChar >= 'a' && rowChar <= 'z')
+        rowChar = (char)(rowChar - 'a' + 'A');
+
+    if (rowChar < 'A' || rowChar > 'I') return false;
+    if (c < 1 || c > 9) return false;
+    if (v < 1 || v > 9) return false;
+
+    *row   = rowChar - 'A';  // 0..8
+    *col   = c - 1;          // 0..8
+    *value = v;              // 1..9
+
+    return true;
+}
+
 // New Function: Waits for input from a specific client socket
 static int read_move_from_client(int client_sock, int *row, int *col, int *value, int seconds)
 {
@@ -149,28 +172,7 @@ static MoveStatus validate_move(const Board puzzle,
 
 // Parse input like "A7 4" or "a7 4" into row/col/value.
 // Returns true on success, false otherwise.
-static bool parse_A7_move(const char *line, int *row, int *col, int *value)
-{
-    char rowChar;
-    int c, v;
 
-    if (sscanf(line, " %c%d %d", &rowChar, &c, &v) != 3) {
-        return false;
-    }
-
-    if (rowChar >= 'a' && rowChar <= 'z')
-        rowChar = (char)(rowChar - 'a' + 'A');
-
-    if (rowChar < 'A' || rowChar > 'I') return false;
-    if (c < 1 || c > 9) return false;
-    if (v < 1 || v > 9) return false;
-
-    *row   = rowChar - 'A';  // 0..8
-    *col   = c - 1;          // 0..8
-    *value = v;              // 1..9
-
-    return true;
-}
 
 // Returns:
 //   1  = got a valid move in time (row/col/value set)
