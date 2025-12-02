@@ -23,15 +23,12 @@
     #include <netinet/in.h>
 #endif
 
-// NEW GLOBAL VARIABLES for client mode configuration
 static char *g_server_addr = NULL;
 static int g_server_port = 0;
 
 static int client_socks[3] = {0,0,0};   // 1 = P1, 2 = P2
 
-// -----------------------------------------------------------------------------
-// Broadcasting helpers
-// -----------------------------------------------------------------------------
+
 static void broadcast(const char *text) {
     for (int i = 1; i <= 2; i++) {
         if (client_socks[i] > 0)
@@ -57,9 +54,6 @@ static void broadcastf(const char *fmt, ...) {
     broadcast(__buf);                        \
 } while(0)
 
-// -----------------------------------------------------------------------------
-// Socket helpers
-// -----------------------------------------------------------------------------
 
 // Read one line (client -> server)
 static int recv_line(int sock, char *buf, int max) {
@@ -107,9 +101,6 @@ static void flush_client_socket(int sock)
     }
 }
 
-// -----------------------------------------------------------------------------
-// Move parsing / validation
-// -----------------------------------------------------------------------------
 
 static bool parse_A7_move(const char *line, int *row, int *col, int *value)
 {
@@ -144,13 +135,10 @@ static bool parse_A7_move(const char *line, int *row, int *col, int *value)
 //  -2  = bad format
 static int read_move_from_client(int client_sock, int *row, int *col, int *value, int seconds)
 {
-    // 1) Throw away anything the player typed before their turn actually started
     flush_client_socket(client_sock);
 
-    // 2) Tell this client it's their turn (only this socket gets the token)
     send(client_sock, "YOUR_MOVE\n", (int)strlen("YOUR_MOVE\n"), 0);
 
-    // 3) Wait on that socket with timeout
     fd_set read_fds;
     struct timeval tv;
 
@@ -226,9 +214,6 @@ static MoveStatus validate_move(const Board puzzle,
     return MOVE_OK;
 }
 
-// -----------------------------------------------------------------------------
-// Mode parsing
-// -----------------------------------------------------------------------------
 
 ProgramMode parse_mode(int argc, char *argv[], int *out_player_id)
 {
@@ -275,9 +260,6 @@ ProgramMode parse_mode(int argc, char *argv[], int *out_player_id)
     exit(EXIT_FAILURE);
 }
 
-// -----------------------------------------------------------------------------
-// Server: board shown to both; only active player gets YOUR_MOVE
-// -----------------------------------------------------------------------------
 
 int run_server(void)
 {
@@ -482,9 +464,6 @@ int run_server(void)
     }
 }
 
-// -----------------------------------------------------------------------------
-// Client
-// -----------------------------------------------------------------------------
 
 int run_client(int player_id, const char *server_addr, int port)
 {
@@ -581,8 +560,6 @@ int run_client(int player_id, const char *server_addr, int port)
                 close(s);
                 return 1;
             }
-
-            // Loop continues in case the same recv chunk has more text after YOUR_MOVE
         }
     }
 
