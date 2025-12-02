@@ -9,11 +9,19 @@
 #include <stdbool.h>
 #include <time.h>
 #include <ctype.h>
-
-#include <unistd.h>
-#include <arpa/inet.h>
-#include <sys/socket.h>
 #include <stdarg.h>
+
+#ifdef _WIN32
+    #include <winsock2.h>
+    #include <ws2tcpip.h>
+    #define close closesocket
+    typedef int socklen_t;// Portability macro
+#else
+    #include <unistd.h>
+    #include <arpa/inet.h>
+    #include <sys/socket.h>
+    #include <netinet/in.h>
+#endif
 
 // NEW GLOBAL VARIABLES for client mode configuration
 static char *g_server_addr = NULL;
@@ -21,7 +29,9 @@ static int g_server_port = 0;
 
 static int client_socks[3] = {0,0,0};   // 1 = P1, 2 = P2
 
-// server-side broadcast
+// -----------------------------------------------------------------------------
+// Broadcasting helpers
+// -----------------------------------------------------------------------------
 static void broadcast(const char *text) {
     for (int i = 1; i <= 2; i++) {
         if (client_socks[i] > 0)
@@ -40,13 +50,18 @@ static void broadcastf(const char *fmt, ...) {
 }
 
 #define PRINTF(...) do {                     \
-char __buf[2048];                        \
-int __n = sprintf(__buf, __VA_ARGS__);   \
-write(1, __buf, __n);                    \
-broadcast(__buf);                        \
+    char __buf[2048];                        \
+    int __n = snprintf(__buf, sizeof(__buf), __VA_ARGS__); \
+    (void)__n;                               \
+    printf("%s", __buf);                     \
+    broadcast(__buf);                        \
 } while(0)
 
-// Read one line (client)
+// -----------------------------------------------------------------------------
+// Socket helpers
+// -----------------------------------------------------------------------------
+
+// Read one line (client -> server)
 static int recv_line(int sock, char *buf, int max) {
     int i = 0;
     while (i < max - 1) {
@@ -62,14 +77,80 @@ static int recv_line(int sock, char *buf, int max) {
     return 1;
 }
 
-// New Function: Waits for input from a specific client socket
+// Discard any pending data from this client's socket so they can't "pre-type" moves
+static void flush_client_socket(int sock)
+{
+    char tmp[256];
+    fd_set rfds;
+    struct timeval tv;
+    int r;
+
+    for (;;) {
+        FD_ZERO(&rfds);
+        FD_SET(sock, &rfds);
+        tv.tv_sec = 0;
+        tv.tv_usec = 0;
+
+        r = select(sock + 1, &rfds, NULL, NULL, &tv);
+        if (r <= 0) {
+            // No more data ready, or error
+            break;
+        }
+
+        if (FD_ISSET(sock, &rfds)) {
+            int n = recv(sock, tmp, sizeof(tmp), 0);
+            if (n <= 0) {
+                // Error or connection closed
+                break;
+            }
+        }
+    }
+}
+
+// -----------------------------------------------------------------------------
+// Move parsing / validation
+// -----------------------------------------------------------------------------
+
+static bool parse_A7_move(const char *line, int *row, int *col, int *value)
+{
+    char rowChar;
+    int c, v;
+
+    // FORMAT: Letter (row), Number (column), Value
+    // Example: "A7 4"
+    if (sscanf(line, " %c%d %d", &rowChar, &c, &v) != 3) {
+        return false;
+    }
+
+    if (rowChar >= 'a' && rowChar <= 'z')
+        rowChar = (char)(rowChar - 'a' + 'A');
+
+    if (rowChar < 'A' || rowChar > 'I') return false;
+    if (c < 1 || c > 9) return false;
+    if (v < 1 || v > 9) return false;
+
+    *row   = rowChar - 'A';  // 0..8
+    *col   = c - 1;          // 0..8
+    *value = v;              // 1..9
+
+    return true;
+}
+
+// Wait for a move from a specific client socket, with timeout.
+// Returns:
+//   1  = got a valid move in time (row/col/value set)
+//   0  = timeout
+//  -1  = connection closed / error
+//  -2  = bad format
 static int read_move_from_client(int client_sock, int *row, int *col, int *value, int seconds)
 {
-    // The server needs to send the prompt to the client FIRST
-    // The client is designed to wait for "YOUR_MOVE"
-    send(client_sock, "YOUR_MOVE", strlen("YOUR_MOVE"), 0);
+    // 1) Throw away anything the player typed before their turn actually started
+    flush_client_socket(client_sock);
 
-    // Now use select() to wait on the socket with a timeout
+    // 2) Tell this client it's their turn (only this socket gets the token)
+    send(client_sock, "YOUR_MOVE\n", (int)strlen("YOUR_MOVE\n"), 0);
+
+    // 3) Wait on that socket with timeout
     fd_set read_fds;
     struct timeval tv;
 
@@ -88,26 +169,25 @@ static int read_move_from_client(int client_sock, int *row, int *col, int *value
         return -1; // Error
     }
 
-    // Check if the socket is ready to be read
     if (FD_ISSET(client_sock, &read_fds)) {
         char line[128];
         if (!recv_line(client_sock, line, sizeof(line))) {
             return -1; // Connection closed/error
         }
 
-        // Use your existing parsing function
         if (!parse_A7_move(line, row, col, value)) {
             return -2; // Bad format
         }
         return 1; // Success
     }
+
     return -1; // Should not happen
 }
 
 static void copy_board(Board dst, const Board src)
 {
-    for (int r = 0; r < SIZE; r++) {
-        for (int c = 0; c < SIZE; c++) {
+    for (int r = 0; r < BOARDSIZE; r++) {
+        for (int c = 0; c < BOARDSIZE; c++) {
             dst[r][c] = src[r][c];
         }
     }
@@ -126,7 +206,7 @@ static MoveStatus validate_move(const Board puzzle,
                                 const Board current,
                                 int row, int col, int value)
 {
-    if (row < 0 || row >= SIZE || col < 0 || col >= SIZE ||
+    if (row < 0 || row >= BOARDSIZE || col < 0 || col >= BOARDSIZE ||
         value < 1 || value > 9) {
         return MOVE_OUT_OF_RANGE;
     }
@@ -146,61 +226,9 @@ static MoveStatus validate_move(const Board puzzle,
     return MOVE_OK;
 }
 
-
-// Parse input like "A7 4" or "a7 4" into row/col/value.
-// Returns true on success, false otherwise.
-static bool parse_A7_move(const char *line, int *row, int *col, int *value)
-{
-    char rowChar;
-    int c, v;
-
-    if (sscanf(line, " %c%d %d", &rowChar, &c, &v) != 3) {
-        return false;
-    }
-
-    if (rowChar >= 'a' && rowChar <= 'z')
-        rowChar = (char)(rowChar - 'a' + 'A');
-
-    if (rowChar < 'A' || rowChar > 'I') return false;
-    if (c < 1 || c > 9) return false;
-    if (v < 1 || v > 9) return false;
-
-    *row   = rowChar - 'A';  // 0..8
-    *col   = c - 1;          // 0..8
-    *value = v;              // 1..9
-
-    return true;
-}
-
-// Returns:
-//   1  = got a valid move in time (row/col/value set)
-//   0  = input took too long (time up)
-//  -1  = EOF / input error
-//  -2  = bad format (not A7 4)
-static int read_move_A7_with_timer(int *row, int *col, int *value, int seconds)
-{
-    char line[128];
-
-    time_t start = time(NULL);
-
-    printf("You have %d seconds. Enter move like A7 4: ", seconds);
-    fflush(stdout);
-
-    if (!fgets(line, sizeof(line), stdin)) {
-        return -1;  // EOF / error
-    }
-
-    time_t end = time(NULL);
-    if ((int)(end - start) > seconds) {
-        return 0;   // took too long
-    }
-
-    if (!parse_A7_move(line, row, col, value)) {
-        return -2;  // bad format
-    }
-
-    return 1;
-}
+// -----------------------------------------------------------------------------
+// Mode parsing
+// -----------------------------------------------------------------------------
 
 ProgramMode parse_mode(int argc, char *argv[], int *out_player_id)
 {
@@ -208,7 +236,7 @@ ProgramMode parse_mode(int argc, char *argv[], int *out_player_id)
         fprintf(stderr,
                 "Usage:\n"
                 "  %s server\n"
-                "  %s client [ID] [ADDRESS] [PORT]\n", // <-- UPDATED USAGE
+                "  %s client [ID] [ADDRESS] [PORT]\n",
                 argv[0], argv[0]);
         exit(EXIT_FAILURE);
     }
@@ -219,8 +247,7 @@ ProgramMode parse_mode(int argc, char *argv[], int *out_player_id)
     }
 
     if (strcmp(argv[1], "client") == 0) {
-        // Must have ID, ADDRESS, and PORT (4 arguments total: 0, 1, 2, 3, 4)
-        if (argc < 5) { // <-- CHECK FOR 5 ARGS
+        if (argc < 5) {
             fprintf(stderr, "Error: client mode requires player number (1 or 2), server address, and port.\n");
             exit(EXIT_FAILURE);
         }
@@ -231,9 +258,8 @@ ProgramMode parse_mode(int argc, char *argv[], int *out_player_id)
             exit(EXIT_FAILURE);
         }
 
-        // CAPTURE ARGUMENTS
-        g_server_addr = argv[3]; // <-- Store Address
-        g_server_port = atoi(argv[4]); // <-- Store Port
+        g_server_addr = argv[3];
+        g_server_port = atoi(argv[4]);
 
         if (g_server_port <= 0) {
             fprintf(stderr, "Error: invalid port number '%s'.\n", argv[4]);
@@ -248,6 +274,11 @@ ProgramMode parse_mode(int argc, char *argv[], int *out_player_id)
             argv[1]);
     exit(EXIT_FAILURE);
 }
+
+// -----------------------------------------------------------------------------
+// Server: board shown to both; only active player gets YOUR_MOVE
+// -----------------------------------------------------------------------------
+
 int run_server(void)
 {
     int seconds_per_turn = 20;
@@ -257,7 +288,7 @@ int run_server(void)
 
     int s = socket(AF_INET, SOCK_STREAM, 0);
     int yes = 1;
-    setsockopt(s, SOL_SOCKET, SO_REUSEADDR, &yes, sizeof(yes));
+    setsockopt(s, SOL_SOCKET, SO_REUSEADDR, (const char*)&yes, sizeof(yes));
 
     struct sockaddr_in addr = {0};
     addr.sin_family = AF_INET;
@@ -268,16 +299,18 @@ int run_server(void)
     listen(s, 2);
 
     client_socks[1] = accept(s, NULL, NULL);
+    send(client_socks[1], "YOU_ARE_PLAYER 1\n", 18, 0);
     PRINTF("PLAYER 1 connected.\n");
 
     client_socks[2] = accept(s, NULL, NULL);
+    send(client_socks[2], "YOU_ARE_PLAYER 2\n", 18, 0);
     PRINTF("PLAYER 2 connected.\n");
 
-    printf("Two-player Sudoku.\n");
-    printf("Input format: A7 4  (row A–I, column 1–9, value 1–9)\n");
-    printf("Each turn: %d seconds to enter ONE move.\n", seconds_per_turn);
-    printf("Correct number = +1 point. Wrong number = no change, turn passes.\n");
-    printf("No input / too slow = turn lost.\n");
+    PRINTF("Two-player Sudoku.\n");
+    PRINTF("Input format: A7 4 (row letter, column number, value).\n");
+    PRINTF("Each turn: %d seconds to enter ONE move.\n", seconds_per_turn);
+    PRINTF("Correct number = +1 point. Wrong number = no change, turn passes.\n");
+    PRINTF("No input / too slow = turn lost.\n");
 
     // Outer loop: each iteration is a NEW puzzle ("next exercise")
     while (1) {
@@ -317,23 +350,40 @@ int run_server(void)
             while (!board_is_full(current)) {
                 int player_index = turn + 1;
                 int turn_sock = client_socks[player_index];
-                printf("\n==== %s's TURN ====\n", players[turn].name);
-                board_print(current, stdout);
+
+                // Announce whose turn it is to everyone
+                PRINTF("\n==== %s's TURN ====\n", players[turn].name);
+
+                // Show the board to EVERYONE (PRINTF broadcasts)
+                char board_output_buffer[2048];
+                board_to_string(current, board_output_buffer, sizeof(board_output_buffer));
+                PRINTF("%s", board_output_buffer);
+                // Debug: show board on server console too
+                printf("\n[DEBUG] Current board on server:\n%s\n", board_output_buffer);
+                fflush(stdout);
+
 
                 int r, c, v;
                 int res = read_move_from_client(turn_sock, &r, &c, &v, seconds_per_turn);
 
                 if (res == 0) {
-                    printf("Time up! No move registered. Turn lost.\n");
+                    PRINTF("Time up! No move registered. Turn lost.\n");
                     turn = 1 - turn;
                     continue;
                 }
                 if (res == -1) {
-                    printf("Input error. Ending game.\n");
-                    return 0;
+                    // Fatal Error / Disconnection detected
+                    PRINTF("\n*** %s disconnected. Ending game for all players. ***\n", players[turn].name);
+
+                    // Close the socket that failed
+                    if (turn_sock > 0) close(turn_sock);
+                    client_socks[player_index] = 0;
+
+                    PRINTF("SERVER SHUTDOWN initiated by player disconnection.\n");
+                    exit(EXIT_SUCCESS);
                 }
                 if (res == -2) {
-                    printf("Invalid input. Use format like A7 4.\n");
+                    PRINTF("Invalid input. Use format like A7 4.\n");
                     turn = 1 - turn;
                     continue;
                 }
@@ -343,19 +393,19 @@ int run_server(void)
                 if (status != MOVE_OK) {
                     switch (status) {
                         case MOVE_OUT_OF_RANGE:
-                            printf("Move out of range.\n");
+                            PRINTF("Move out of range.\n");
                             break;
                         case MOVE_FIXED_CELL:
-                            printf("Cannot change an original puzzle clue.\n");
+                            PRINTF("Cannot change an original puzzle clue.\n");
                             break;
                         case MOVE_ALREADY_FILLED:
-                            printf("That cell is already filled.\n");
+                            PRINTF("That cell is already filled.\n");
                             break;
                         case MOVE_BREAKS_RULES:
-                            printf("That move breaks Sudoku rules.\n");
+                            PRINTF("That move breaks Sudoku rules.\n");
                             break;
                         default:
-                            printf("Unknown move error.\n");
+                            PRINTF("Unknown move error.\n");
                             break;
                     }
                     turn = 1 - turn;
@@ -366,38 +416,40 @@ int run_server(void)
                 if (solution[r][c] == v) {
                     current[r][c] = v;
                     players[turn].score++;
-                    printf("Correct! %s gains a point.\n", players[turn].name);
+                    PRINTF("Correct! %s gains a point.\n", players[turn].name);
                 } else {
-                    printf("Wrong number. Board stays the same.\n");
+                    PRINTF("Wrong number. Board stays the same.\n");
                 }
 
                 turn = 1 - turn;
             }
 
             // ---- puzzle finished once ----
-            printf("\n=== EXERCISE COMPLETE ===\n");
-            board_print(current, stdout);
-            printf("Scores for this exercise:\n");
-            printf("Player 1: %d\n", players[0].score);
-            printf("Player 2: %d\n", players[1].score);
+            PRINTF("\n=== EXERCISE COMPLETE ===\n");
+            char final_board_output_buffer[2048];
+            board_to_string(current, final_board_output_buffer, sizeof(final_board_output_buffer));
+            PRINTF("%s", final_board_output_buffer);
+            PRINTF("Scores for this exercise:\n");
+            PRINTF("Player 1: %d\n", players[0].score);
+            PRINTF("Player 2: %d\n", players[1].score);
 
             if (players[0].score > players[1].score)
-                printf("Winner: Player 1!\n");
+                PRINTF("Winner: Player 1!\n");
             else if (players[1].score > players[0].score)
-                printf("Winner: Player 2!\n");
+                PRINTF("Winner: Player 2!\n");
             else
-                printf("It's a tie!\n");
+                PRINTF("It's a tie!\n");
 
             // ---- ask what to do next for this exercise ----
             char buf[32];
             char choice;
 
             while (1) {
-                printf("\nWhat do you want to do now?\n");
-                printf("  R - Replay the SAME exercise\n");
-                printf("  N - Next exercise (new puzzle)\n");
-                printf("  Q - Quit\n");
-                printf("Choice: ");
+                PRINTF("\nWhat do you want to do now?\n");
+                PRINTF("  R - Replay the SAME exercise\n");
+                PRINTF("  N - Next exercise (new puzzle)\n");
+                PRINTF("  Q - Quit\n");
+                PRINTF("Choice: ");
                 fflush(stdout);
 
                 if (!fgets(buf, sizeof(buf), stdin)) {
@@ -406,39 +458,45 @@ int run_server(void)
                 }
 
                 if (sscanf(buf, " %c", &choice) != 1) {
-                    printf("Invalid input.\n");
+                    PRINTF("Invalid input.\n");
                     continue;
                 }
 
                 choice = (char)toupper((unsigned char)choice);
 
                 if (choice == 'R') {
-                    printf("\nReplaying the same exercise...\n");
-                    // break only the choice loop, replay same puzzle
-                    break;
+                    PRINTF("\nReplaying the same exercise...\n");
+                    break;          // replay same puzzle
                 } else if (choice == 'N') {
-                    printf("\nLoading next exercise...\n");
+                    PRINTF("\nLoading next exercise...\n");
                     next_puzzle = true;
-                    break;
+                    break;          // go to new puzzle
                 } else if (choice == 'Q') {
-                    printf("\nQuitting the game. Bye!\n");
+                    PRINTF("\nQuitting the game. Bye!\n");
                     return 0;
                 } else {
-                    printf("Please enter R, N, or Q.\n");
+                    PRINTF("Please enter R, N, or Q.\n");
                 }
             }
-            // if choice == 'R', inner while(!next_puzzle) repeats with same puzzle
         }
-        // if next_puzzle == true, outer while(1) continues and generates new puzzle
     }
 }
 
+// -----------------------------------------------------------------------------
+// Client
+// -----------------------------------------------------------------------------
 
 int run_client(int player_id, const char *server_addr, int port)
 {
+    int my_player_id = 0;
+
     printf("CLIENT %d connecting...\n", player_id);
 
     int s = socket(AF_INET, SOCK_STREAM, 0);
+    if (s < 0) {
+        perror("socket");
+        return 1;
+    }
 
     struct sockaddr_in addr = {0};
     addr.sin_family = AF_INET;
@@ -446,51 +504,116 @@ int run_client(int player_id, const char *server_addr, int port)
 
     if (inet_pton(AF_INET, server_addr, &addr.sin_addr) <= 0) {
         perror("Invalid address/Address not supported");
+        close(s);
         return 1;
     }
 
     if (connect(s, (struct sockaddr*)&addr, sizeof(addr)) < 0) {
         perror("connect");
+        close(s);
         return 1;
     }
 
     printf("Connected to server.\n");
 
-    char buf[512];
+    char recv_buf[4096];
+    char input_buf[128];
 
+    // Simple loop: always read from server; on YOUR_MOVE, read from stdin and send.
     while (1) {
-        if (!recv_line(s, buf, sizeof(buf)))
-            break;
+        int n = recv(s, recv_buf, sizeof(recv_buf) - 1, 0);
+        // --- Detect personal player identity message ---
+        char *idmsg = strstr(recv_buf, "YOU_ARE_PLAYER");
+        if (idmsg) {
+            int id;
+            if (sscanf(idmsg, "YOU_ARE_PLAYER %d", &id) == 1) {
+                my_player_id = id;
+                printf(">>> You are Player %d\n", my_player_id);
+            }
 
-        if (strcmp(buf, "YOUR_MOVE") == 0) {
+            // Remove identity message from buffer before normal printing
+            char *endline = strchr(idmsg, '\n');
+            if (endline) endline++;
+            if (endline) memmove(idmsg, endline, strlen(endline) + 1);
+        }
+
+        if (n <= 0) {
+            printf("\nServer closed connection.\n");
+            break;
+        }
+        recv_buf[n] = '\0';
+
+        char *cursor = recv_buf;
+
+        for (;;) {
+            char *token = strstr(cursor, "YOUR_MOVE");
+            if (!token) {
+                // No more YOUR_MOVE in this chunk, just print the rest
+                printf("%s", cursor);
+                fflush(stdout);
+                break;
+            }
+
+            // Print everything up to "YOUR_MOVE"
+            *token = '\0';
+            printf("%s", cursor);
+            fflush(stdout);
+
+            // Consume the token (and any trailing newline, if present)
+            cursor = token + strlen("YOUR_MOVE");
+            if (*cursor == '\n') cursor++;
+
+            // Prompt user and send move
             printf("Enter move (A7 4): ");
             fflush(stdout);
 
-            char input[128];
-            fgets(input, sizeof(input), stdin);
-            input[strcspn(input, "\n")] = 0;
+            if (!fgets(input_buf, sizeof(input_buf), stdin)) {
+                printf("\nInput closed. Exiting.\n");
+                close(s);
+                return 0;
+            }
+            input_buf[strcspn(input_buf, "\n")] = '\0';
 
-            send(s, input, strlen(input), 0);
-            send(s, "\n", 1, 0);
-        } else {
-            printf("%s\n", buf);
+            char send_buf[256];
+            int len = snprintf(send_buf, sizeof(send_buf), "%s\n", input_buf);
+            if (send(s, send_buf, len, 0) < 0) {
+                perror("send");
+                close(s);
+                return 1;
+            }
+
+            // Loop continues in case the same recv chunk has more text after YOUR_MOVE
         }
     }
 
     close(s);
     return 0;
-
 }
+
 
 
 int main(int argc, char *argv[])
 {
-        int player_id = 0;
-        ProgramMode mode = parse_mode(argc, argv, &player_id);
+    int player_id = 0;
+    ProgramMode mode = parse_mode(argc,argv, &player_id);
 
-        if (mode == MODE_SERVER)
-            return run_server();
-        else
-            // PASS THE CAPTURED ARGUMENTS to run_client
-                return run_client(player_id, g_server_addr, g_server_port);
+#ifdef _WIN32
+    WSADATA wsaData;
+    if (WSAStartup(MAKEWORD(2, 2), &wsaData) != 0) {
+        fprintf(stderr, "WSAStartup failed.\n");
+        return 1;
+    }
+#endif
+
+    int result;
+    if (mode == MODE_SERVER)
+        result = run_server();
+    else
+        result = run_client(player_id, g_server_addr, g_server_port);
+
+#ifdef _WIN32
+    WSACleanup();
+#endif
+
+    return result;
 }

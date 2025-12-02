@@ -5,9 +5,19 @@
 #include <string.h>
 #include <unistd.h>
 #include <errno.h>
-#include <arpa/inet.h>
-#include <netinet/in.h>
-#include <sys/socket.h>
+
+
+#ifdef _WIN32
+    #include <winsock2.h>
+    #include <ws2tcpip.h>
+    #define close closesocket // Portability macro
+#else
+    #include <unistd.h>
+    #include <arpa/inet.h>
+    #include <sys/socket.h>
+    #include <netinet/in.h> // Good practice for Unix-like systems
+#endif
+
 
 int net_listen(int port)
 {

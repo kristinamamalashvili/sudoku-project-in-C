@@ -4,13 +4,13 @@
 int solver_is_safe(const Board b, int row, int col, int value)
 {
     // Row check
-    for (int c = 0; c < SIZE; c++) {
+    for (int c = 0; c < BOARDSIZE; c++) {
         if (b[row][c] == value)
             return 0;
     }
 
     // Column check
-    for (int r = 0; r < SIZE; r++) {
+    for (int r = 0; r < BOARDSIZE; r++) {
         if (b[r][col] == value)
             return 0;
     }
@@ -31,8 +31,8 @@ int solver_is_safe(const Board b, int row, int col, int value)
 
 static int find_empty(const Board b, int *row, int *col)
 {
-    for (int r = 0; r < SIZE; r++) {
-        for (int c = 0; c < SIZE; c++) {
+    for (int r = 0; r < BOARDSIZE; r++) {
+        for (int c = 0; c < BOARDSIZE; c++) {
             if (b[r][c] == 0) {
                 *row = r;
                 *col = c;

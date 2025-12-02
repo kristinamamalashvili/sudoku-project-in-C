@@ -8,6 +8,9 @@ add_executable(sudoku
         board.c
         solver.c
         generator.c
-        net.c}
+        net.c)
+target_include_directories(sudoku PRIVATE   ${CMAKE_CURRENT_SOURCE_DIR})
 
-target_include_directories(sudoku PRIVATE   ${CMAKE_CURRENT_SOURCE_DIR} )
+if(WIN32)
+        target_link_libraries(sudoku ws2_32)
+endif()

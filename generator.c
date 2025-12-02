@@ -2,6 +2,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
 #include "board.h"
 
 void generate_puzzle(Board puzzle, Board solution) {

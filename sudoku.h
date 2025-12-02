@@ -11,6 +11,6 @@ typedef enum {
 
 ProgramMode parse_mode(int argc, char *argv[], int *out_player_id);
 int run_server(void);
-int run_client(int player_id);
+int run_client(int player_id, const char *server_addr, int port);
 
 #endif //SUDOKU_H
