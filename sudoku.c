@@ -423,19 +423,27 @@ int run_server(void)
                 PRINTF("It's a tie!\n");
 
             // ---- ask what to do next for this exercise ----
-            char buf[32];
-            char choice;
 
             while (1) {
+                char buf[32];
+                char choice;
+                int p1_sock = client_socks[1];
+
                 PRINTF("\nWhat do you want to do now?\n");
                 PRINTF("  R - Replay the SAME exercise\n");
                 PRINTF("  N - Next exercise (new puzzle)\n");
                 PRINTF("  Q - Quit\n");
-                PRINTF("Choice: ");
-                fflush(stdout);
+                PRINTF("Player 1, enter choice (R/N/Q):\n");
 
-                if (!fgets(buf, sizeof(buf), stdin)) {
-                    // EOF or input error -> just quit
+                // Make sure any old keystrokes from P1 are discarded
+                if (p1_sock > 0) {
+                    flush_client_socket(p1_sock);
+                    // Tell Player 1 this is a menu prompt
+                    send(p1_sock, "YOUR_MENU\n", (int)strlen("YOUR_MENU\n"), 0);
+                }
+
+                if (p1_sock <= 0 || !recv_line(p1_sock, buf, sizeof(buf))) {
+                    PRINTF("\n*** Player 1 disconnected during menu. Ending game. ***\n");
                     return 0;
                 }
 
@@ -448,11 +456,11 @@ int run_server(void)
 
                 if (choice == 'R') {
                     PRINTF("\nReplaying the same exercise...\n");
-                    break;          // replay same puzzle
+                    break;              // replay same puzzle
                 } else if (choice == 'N') {
                     PRINTF("\nLoading next exercise...\n");
-                    next_puzzle = true;
-                    break;          // go to new puzzle
+                    next_puzzle = true; // go to new puzzle
+                    break;
                 } else if (choice == 'Q') {
                     PRINTF("\nQuitting the game. Bye!\n");
                     return 0;
