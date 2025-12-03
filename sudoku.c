@@ -181,7 +181,6 @@ typedef enum {
     MOVE_BREAKS_RULES
 } MoveStatus;
 
-// Check if a move is legal (but not whether it matches solution).
 static MoveStatus validate_move(const Board puzzle,
                                 const Board current,
                                 int row, int col, int value)
@@ -191,15 +190,12 @@ static MoveStatus validate_move(const Board puzzle,
         return MOVE_OUT_OF_RANGE;
     }
 
-    // cannot change original puzzle clues
     if (puzzle[row][col] != 0)
         return MOVE_FIXED_CELL;
 
-    // cannot rewrite already filled cell
     if (current[row][col] != 0)
         return MOVE_ALREADY_FILLED;
 
-    // Sudoku rules: row/col/3x3
     if (!board_is_move_valid(current, row, col, value))
         return MOVE_BREAKS_RULES;
 
@@ -286,7 +282,6 @@ int run_server(void)
     PRINTF("Correct number = +1 point. Wrong number = no change, turn passes.\n");
     PRINTF("No input / too slow = turn lost.\n");
 
-    // Outer loop: each iteration is a NEW puzzle ("next exercise")
     while (1) {
         Board puzzle;
         Board solution;
@@ -295,7 +290,6 @@ int run_server(void)
         generate_puzzle(puzzle, solution);
         copy_board(current, puzzle);
 
-        // Optional: check solver works
         Board check;
         copy_board(check, puzzle);
         if (!solve(check)) {
@@ -340,10 +334,8 @@ int run_server(void)
                     continue;
                 }
                 if (res == -1) {
-                    // Fatal Error / Disconnection detected
                     PRINTF("\n*** %s disconnected. Ending game for all players. ***\n", players[turn].name);
 
-                    // Close the socket that failed
                     if (turn_sock > 0) close(turn_sock);
                     client_socks[player_index] = 0;
 
@@ -380,7 +372,6 @@ int run_server(void)
                     continue;
                 }
 
-                // Check against solution
                 if (solution[r][c] == v) {
                     current[r][c] = v;
                     players[turn].score++;
@@ -392,7 +383,6 @@ int run_server(void)
                 turn = 1 - turn;
             }
 
-            // ---- puzzle finished once ----
             PRINTF("\n=== EXERCISE COMPLETE ===\n");
             char final_board_output_buffer[2048];
             board_to_string(current, final_board_output_buffer, sizeof(final_board_output_buffer));
@@ -408,7 +398,6 @@ int run_server(void)
             else
                 PRINTF("It's a tie!\n");
 
-            // ---- ask what to do next for this exercise ----
 
             while (1) {
                 char buf[32];
@@ -421,10 +410,8 @@ int run_server(void)
                 PRINTF("  Q - Quit\n");
                 PRINTF("Player 1, enter choice (R/N/Q):\n");
 
-                // Make sure any old keystrokes from P1 are discarded
                 if (p1_sock > 0) {
                     flush_client_socket(p1_sock);
-                    // Tell Player 1 this is a menu prompt
                     send(p1_sock, "YOUR_MENU\n", (int)strlen("YOUR_MENU\n"), 0);
                 }
 
@@ -495,7 +482,6 @@ int run_client(int player_id, const char *server_addr, int port)
     // Simple loop: always read from server; on YOUR_MOVE, read from stdin and send.
     while (1) {
         int n = recv(s, recv_buf, sizeof(recv_buf) - 1, 0);
-        // --- Detect personal player identity message ---
         char *idmsg = strstr(recv_buf, "YOU_ARE_PLAYER");
         if (idmsg) {
             int id;
@@ -504,7 +490,6 @@ int run_client(int player_id, const char *server_addr, int port)
                 printf(">>> You are Player %d\n", my_player_id);
             }
 
-            // Remove identity message from buffer before normal printing
             char *endline = strchr(idmsg, '\n');
             if (endline) endline++;
             if (endline) memmove(idmsg, endline, strlen(endline) + 1);
@@ -521,22 +506,18 @@ int run_client(int player_id, const char *server_addr, int port)
         for (;;) {
             char *token = strstr(cursor, "YOUR_MOVE");
             if (!token) {
-                // No more YOUR_MOVE in this chunk, just print the rest
                 printf("%s", cursor);
                 fflush(stdout);
                 break;
             }
 
-            // Print everything up to "YOUR_MOVE"
             *token = '\0';
             printf("%s", cursor);
             fflush(stdout);
 
-            // Consume the token (and any trailing newline, if present)
             cursor = token + strlen("YOUR_MOVE");
             if (*cursor == '\n') cursor++;
 
-            // Prompt user and send move
             printf("Enter move (A7 4): ");
             fflush(stdout);
 
