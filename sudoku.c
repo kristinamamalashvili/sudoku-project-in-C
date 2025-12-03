@@ -55,7 +55,6 @@ static void broadcastf(const char *fmt, ...) {
 } while(0)
 
 
-// Read one line (client -> server)
 static int recv_line(int sock, char *buf, int max) {
     int i = 0;
     while (i < max - 1) {
@@ -71,7 +70,6 @@ static int recv_line(int sock, char *buf, int max) {
     return 1;
 }
 
-// Discard any pending data from this client's socket so they can't "pre-type" moves
 static void flush_client_socket(int sock)
 {
     char tmp[256];
@@ -87,14 +85,12 @@ static void flush_client_socket(int sock)
 
         r = select(sock + 1, &rfds, NULL, NULL, &tv);
         if (r <= 0) {
-            // No more data ready, or error
             break;
         }
 
         if (FD_ISSET(sock, &rfds)) {
             int n = recv(sock, tmp, sizeof(tmp), 0);
             if (n <= 0) {
-                // Error or connection closed
                 break;
             }
         }
@@ -107,27 +103,23 @@ static bool parse_A7_move(const char *line, int *row, int *col, int *value)
     char rowChar;
     int c, v;
 
-    // FORMAT: Letter (row), Number (column), Value
-    // Example: "A7 4"
     if (sscanf(line, " %c%d %d", &rowChar, &c, &v) != 3) {
         return false;
     }
-
     if (rowChar >= 'a' && rowChar <= 'z')
         rowChar = (char)(rowChar - 'a' + 'A');
-
     if (rowChar < 'A' || rowChar > 'I') return false;
     if (c < 1 || c > 9) return false;
     if (v < 1 || v > 9) return false;
 
-    *row   = rowChar - 'A';  // 0..8
-    *col   = c - 1;          // 0..8
-    *value = v;              // 1..9
+    *row   = rowChar - 'A';
+    *col   = c - 1;
+    *value = v;
 
     return true;
 }
 
-// Wait for a move from a specific client socket, with timeout.
+
 // Returns:
 //   1  = got a valid move in time (row/col/value set)
 //   0  = timeout
@@ -151,25 +143,25 @@ static int read_move_from_client(int client_sock, int *row, int *col, int *value
     int ready = select(client_sock + 1, &read_fds, NULL, NULL, &tv);
 
     if (ready == 0) {
-        return 0; // Timeout
+        return 0;
     }
     if (ready < 0) {
-        return -1; // Error
+        return -1;
     }
 
     if (FD_ISSET(client_sock, &read_fds)) {
         char line[128];
         if (!recv_line(client_sock, line, sizeof(line))) {
-            return -1; // Connection closed/error
+            return -1;
         }
 
         if (!parse_A7_move(line, row, col, value)) {
-            return -2; // Bad format
+            return -2;
         }
-        return 1; // Success
+        return 1;
     }
 
-    return -1; // Should not happen
+    return -1;
 }
 
 static void copy_board(Board dst, const Board src)
@@ -311,9 +303,8 @@ int run_server(void)
             return 1;
         }
 
-        bool next_puzzle = false;  // control flag for inner loop
+        bool next_puzzle = false;
 
-        // Inner loop: allows replaying the SAME puzzle
         while (!next_puzzle) {
             struct {
                 const char *name;
@@ -323,24 +314,19 @@ int run_server(void)
                 { "Player 2", 0 }
             };
 
-            int turn = 0;  // 0 = P1, 1 = P2
+            int turn = 0;
 
-            // reset board (same exercise) each time we replay
             copy_board(current, puzzle);
 
-            // ---- play this puzzle once ----
             while (!board_is_full(current)) {
                 int player_index = turn + 1;
                 int turn_sock = client_socks[player_index];
 
-                // Announce whose turn it is to everyone
                 PRINTF("\n==== %s's TURN ====\n", players[turn].name);
 
-                // Show the board to EVERYONE (PRINTF broadcasts)
                 char board_output_buffer[2048];
                 board_to_string(current, board_output_buffer, sizeof(board_output_buffer));
                 PRINTF("%s", board_output_buffer);
-                // Debug: show board on server console too
                 printf("\n[DEBUG] Current board on server:\n%s\n", board_output_buffer);
                 fflush(stdout);
 

@@ -1,8 +1,8 @@
 #ifndef BOARD_H
 #define BOARD_H
 
-#include <stdio.h>    // For FILE* in board_print
-#include <stdbool.h>  // For true/false return types
+#include <stdio.h>
+#include <stdbool.h>
 
 #define BOARDSIZE 9
 
@@ -16,3 +16,6 @@ void board_to_string(const Board b, char *buf, size_t buf_size);
 
 
 #endif // BOARD_H
+
+
+

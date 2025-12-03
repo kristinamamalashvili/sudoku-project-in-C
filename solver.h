@@ -1,7 +1,7 @@
 #ifndef SOLVER_H
 #define SOLVER_H
 
-#include "board.h"    // for Board type
+#include "board.h"
 #include <stdbool.h>
 
 bool solve(Board b);
@@ -12,3 +12,6 @@ int solver_is_safe(const Board b, int row, int col, int value);
 
 
 #endif //SOLVER_H
+
+
+
