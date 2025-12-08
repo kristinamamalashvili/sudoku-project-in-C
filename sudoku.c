@@ -15,7 +15,7 @@
     #include <winsock2.h>
     #include <ws2tcpip.h>
     #define close closesocket
-    typedef int socklen_t;// Portability macro
+    typedef int socklen_t;
 #else
     #include <unistd.h>
     #include <arpa/inet.h>
@@ -26,7 +26,7 @@
 static char *g_server_addr = NULL;
 static int g_server_port = 0;
 
-static int client_socks[3] = {0,0,0};   // 1 = P1, 2 = P2
+static int client_socks[3] = {0,0,0};
 
 
 static void broadcast(const char *text) {
@@ -317,6 +317,10 @@ int run_server(void)
                 int turn_sock = client_socks[player_index];
 
                 PRINTF("\n==== %s's TURN ====\n", players[turn].name);
+                PRINTF("\nCurrent scores:\n");
+                PRINTF("  Player 1: %d\n", players[0].score);
+                PRINTF("  Player 2: %d\n", players[1].score);
+
 
                 char board_output_buffer[2048];
                 board_to_string(current, board_output_buffer, sizeof(board_output_buffer));
@@ -479,7 +483,7 @@ int run_client(int player_id, const char *server_addr, int port)
     char recv_buf[4096];
     char input_buf[128];
 
-    // Simple loop: always read from server; on YOUR_MOVE, read from stdin and send.
+
     while (1) {
         int n = recv(s, recv_buf, sizeof(recv_buf) - 1, 0);
         char *idmsg = strstr(recv_buf, "YOU_ARE_PLAYER");
@@ -504,7 +508,20 @@ int run_client(int player_id, const char *server_addr, int port)
         char *cursor = recv_buf;
 
         for (;;) {
-            char *token = strstr(cursor, "YOUR_MOVE");
+            char *move = strstr(cursor, "YOUR_MOVE");
+            char *menu = strstr(cursor, "YOUR_MENU");
+            char *token = NULL;
+            int is_move = 0; // 1 = move, 0 = menu
+
+            if (move && (!menu || move < menu)) {
+                token = move;
+                is_move = 1;
+            } else if (menu) {
+                token = menu;
+                is_move = 0;
+            }
+
+
             if (!token) {
                 printf("%s", cursor);
                 fflush(stdout);
@@ -515,25 +532,50 @@ int run_client(int player_id, const char *server_addr, int port)
             printf("%s", cursor);
             fflush(stdout);
 
-            cursor = token + strlen("YOUR_MOVE");
+            cursor = token + (is_move ? (int)strlen("YOUR_MOVE") : (int)strlen("YOUR_MENU"));
             if (*cursor == '\n') cursor++;
 
-            printf("Enter move (A7 4): ");
-            fflush(stdout);
+            if (is_move) {
+                printf("Enter move (A7 4): ");
+                fflush(stdout);
 
-            if (!fgets(input_buf, sizeof(input_buf), stdin)) {
-                printf("\nInput closed. Exiting.\n");
-                close(s);
-                return 0;
-            }
-            input_buf[strcspn(input_buf, "\n")] = '\0';
+                if (!fgets(input_buf, sizeof(input_buf), stdin)) {
+                    printf("\nInput closed. Exiting.\n");
+                    close(s);
+                    return 0;
+                }
+                input_buf[strcspn(input_buf, "\n")] = '\0';
 
-            char send_buf[256];
-            int len = snprintf(send_buf, sizeof(send_buf), "%s\n", input_buf);
-            if (send(s, send_buf, len, 0) < 0) {
-                perror("send");
-                close(s);
-                return 1;
+                char send_buf[256];
+                int len = snprintf(send_buf, sizeof(send_buf), "%s\n", input_buf);
+                if (send(s, send_buf, len, 0) < 0) {
+                    perror("send");
+                    close(s);
+                    return 1;
+                }
+            } else {
+
+                PRINTF("MENU OPTIONS:\n");
+                PRINTF("  R - Replay same puzzle\n");
+                PRINTF("  N - Next puzzle\n");
+                PRINTF("  Q - Quit game\n");
+                PRINTF("Enter your choice (R/N/Q): ");
+                fflush(stdout);
+
+                if (!fgets(input_buf, sizeof(input_buf), stdin)) {
+                    printf("\nInput closed. Exiting.\n");
+                    close(s);
+                    return 0;
+                }
+                input_buf[strcspn(input_buf, "\n")] = '\0';
+
+                char send_buf[256];
+                int len = snprintf(send_buf, sizeof(send_buf), "%s\n", input_buf);
+                if (send(s, send_buf, len, 0) < 0) {
+                    perror("send");
+                    close(s);
+                    return 1;
+                }
             }
         }
     }
@@ -547,7 +589,7 @@ int run_client(int player_id, const char *server_addr, int port)
 int main(int argc, char *argv[])
 {
     int player_id = 0;
-    ProgramMode mode = parse_mode(argc,argv, &player_id);
+        ProgramMode mode = parse_mode(argc, argv, &player_id);
 
 #ifdef _WIN32
     WSADATA wsaData;
